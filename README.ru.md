@@ -10,6 +10,12 @@
 Протокол контроллера закрытый — он восстановлен по btsnoop-дампам штатного
 приложения.
 
+<p align="center">
+  <img src="docs/desktop.png" alt="Окно на ПК" height="440">
+  &nbsp;&nbsp;
+  <img src="docs/phone.png" alt="Веб-панель на телефоне" height="440">
+</p>
+
 ## Возможности
 
 - **Синхронизация с экраном** — захват через Desktop Duplication (dxcam) с

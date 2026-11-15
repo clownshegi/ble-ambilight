@@ -8,6 +8,12 @@ scenes and can be controlled from the PC or from a phone via a web panel.
 
 The controller protocol is closed — it was reverse-engineered from btsnoop dumps of the stock app.
 
+<p align="center">
+  <img src="docs/desktop.png" alt="Desktop window" height="440">
+  &nbsp;&nbsp;
+  <img src="docs/phone.png" alt="Phone web panel" height="440">
+</p>
+
 ## Features
 
 - **Screen sync** — capture via Desktop Duplication (dxcam) with fallback to mss, black-bar cropping,
