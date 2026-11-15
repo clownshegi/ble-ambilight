@@ -1,158 +1,137 @@
-# Lamp — Ambilight и атмосферный свет для BLE-ленты BJ_LED
+# Lamp — Ambilight and ambient lighting for a BJ_LED BLE strip
 
-Программа для Windows, которая управляет недорогой RGB-лентой BJ_LED
-(контроллер BJ-5VRGB, штатное приложение MohuanLED) по Bluetooth Low Energy:
-синхронизирует цвет ленты с картинкой на экране, проигрывает «живые» световые
-сцены и управляется с ПК или с телефона через веб-панель.
+*[Русская версия](README.ru.md)*
 
-Протокол контроллера закрытый — он восстановлен по btsnoop-дампам штатного
-приложения.
+A Windows app that drives a cheap BJ_LED RGB strip (BJ-5VRGB controller, stock app MohuanLED)
+over Bluetooth Low Energy: it syncs the strip with what is on screen, plays "living" light
+scenes and can be controlled from the PC or from a phone via a web panel.
 
-## Возможности
+The controller protocol is closed — it was reverse-engineered from btsnoop dumps of the stock app.
 
-- **Синхронизация с экраном** — захват через Desktop Duplication (dxcam) с
-  откатом на mss, обрезка чёрных полей, детектор склеек, пресеты
-  «Кино», «Игра», «Стол».
-- **Атмосферные сцены** — обычный свет (5000 K днём, 2700 K вечером с учётом
-  заката по координатам), камин, свеча, гроза, плавное засыпание
-  с автоотключением.
-- **Два интерфейса над одним состоянием** — нативное окно (tkinter) и
-  веб-панель для телефона (aiohttp, устанавливается как PWA). Оба работают
-  через общий `Controller` и одно BLE-соединение.
-- **Интеграция с Windows** — сон, пробуждение и блокировка ПК (WinAPI через
-  ctypes), автоприглушение, когда за ПК никого нет, автовыбор пресета по
-  активной программе.
-- **Звук** — громкость системного звука (WASAPI loopback) модулирует яркость.
-- **Калибровка цвета камерой** — кривая каналов по замерам через камеру
-  телефона с зафиксированным балансом белого.
-- **Зоны и другие транспорты** — раскладки на несколько лент или адресная
-  лента WLED по протоколу DDP.
+## Features
 
-## Технические решения
+- **Screen sync** — capture via Desktop Duplication (dxcam) with fallback to mss, black-bar cropping,
+  scene-cut detection, presets "Film", "Game", "Desk".
+- **Ambient scenes** — regular light (5000 K by day, 2700 K in the evening, sunset computed from
+  coordinates), fireplace, candle, thunderstorm, gentle fall-asleep with auto power-off.
+- **Two UIs over one state** — native window (tkinter) and a phone web panel (aiohttp, installable as a PWA).
+  Both go through a shared `Controller` and a single BLE connection.
+- **Windows integration** — reacts to sleep, wake and lock; dims when nobody is at the PC; picks a preset by
+  the active application; system audio volume (WASAPI loopback) modulates brightness.
+- **Camera colour calibration** — per-channel curve measured with a phone camera at locked white balance.
+- **Zones and other transports** — layouts for several strips, or an addressable WLED strip over DDP.
 
-**Обратная разработка протокола.** Грамматика кадра `69 96 LL CC <payload>`
-восстановлена по дампам и воспроизводит все встреченные кадры байт в байт.
-Найдено недокументированное поведение: четвёртый байт команды цвета — это
-*запоминаемая* общая яркость, влияющая на все последующие команды.
-Устройство не шлёт уведомлений, поэтому его состояние нельзя прочитать —
-программа ведёт модель состояния сама.
+## Technical decisions
 
-| CC | команда | кадр |
+**Protocol reverse engineering.** The frame grammar `69 96 LL CC <payload>` was reconstructed from dumps and
+reproduces every observed frame byte for byte. Undocumented behaviour found: the fourth byte of the colour
+command is a *persisted* global brightness that affects all following commands. The device sends no
+notifications, so its state cannot be read — the app keeps its own state model.
+
+| CC | command | frame |
 |---|---|---|
-| 01 | питание | `69 96 02 01 01` / `69 96 02 01 00` |
-| 02 | цвет | `69 96 05 02 RR GG BB [WW]` |
-| 03, 04 | встроенные эффекты | `69 96 03 0X MM SS` |
-| 05 | таймер | `69 96 06 05 01 MASK HH MM 00` |
-| 07 | часы | `69 96 06 07 TT TT TT TT 00` |
+| 01 | power | `69 96 02 01 01` / `69 96 02 01 00` |
+| 02 | colour | `69 96 05 02 RR GG BB [WW]` |
+| 03, 04 | built-in effects | `69 96 03 0X MM SS` |
+| 05 | timer | `69 96 06 05 01 MASK HH MM 00` |
+| 07 | clock | `69 96 06 07 TT TT TT TT 00` |
 
-**Цвет в линейном свете.** Усреднение кадра идёт в линейном свете, а не по
-байтам sRGB (на тёмных сценах ошибка байтового среднего доходит до 5×).
-Светлота берётся из простого среднего, оттенок — из взвешенного по
-насыщенности. Переходы интерполируются в Oklab, чтобы не проходить через
-серый. Выход на ленту — через профиль: баланс белого, порог ШИМ и
-покусочно-линейная кривая каналов.
+**Colour in linear light.** Frames are averaged in linear light, not over sRGB bytes (on dark scenes the
+byte-average error reaches 5×). Lightness comes from a plain mean, hue from a saturation-weighted mean.
+Transitions are interpolated in Oklab so they never pass through grey. Output goes through a profile:
+white balance, PWM floor and a piecewise-linear channel curve.
 
-**Ограниченный канал BLE.** Потолок — около 20 команд в секунду
-(интервал соединения ~45 мс). Запись без подтверждения ничего не сообщает об
-успехе, поэтому отправка идёт через планировщик с мёртвой зоной по итоговым
-байтам относительно последнего *отправленного* значения: медленный дрейф не
-теряется, канал не перегружается.
+**A narrow BLE channel.** The ceiling is about 20 commands per second (~45 ms connection interval).
+Write-without-response reports nothing about success, so sending goes through a scheduler with a dead zone on
+the final bytes relative to the last *sent* value: slow drift is not lost and the link is never flooded.
 
-**Динамика.** Экспоненциальное сглаживание с поправкой на реальный шаг кадра,
-асимметричные разгорание и гашение, обработка вспышек, тёмный порог,
-адаптивный контраст и плавность. Сцены не используют строгих периодов:
-гладкий шум, «плавающие» периоды и пуассоновские события дают
-неповторяющийся рисунок; частоты ограничены (≤ 3 Гц) в самом генераторе.
+**Dynamics.** Exponential smoothing corrected for the real frame step, asymmetric fade-in / fade-out, flash
+handling, dark threshold, adaptive contrast and smoothness. Scenes avoid strict periods: smooth noise,
+"floating" periods and Poisson events give a non-repeating pattern; frequencies are capped (≤ 3 Hz) in the
+generator itself.
 
-**Надёжность.**
-- Все изменения состояния — под `asyncio.Lock`: одновременные команды с ПК
-  и с телефона не конфликтуют.
-- Фоновое переподключение BLE с экспоненциальной паузой, которую сбрасывает
-  любая команда пользователя; keep-alive не меняет цвет ленты.
-- Перезапуск захвата экрана и синхронизации при сбоях, возврат с mss на dxcam.
-- Один экземпляр программы, сторожевой таймер для окна.
-- Веб-API принимает только JSON со своей страницы и по своему хосту —
-  защита от запросов со сторонних сайтов.
+**Reliability.**
+- Every state change happens under an `asyncio.Lock`, so simultaneous commands from PC and phone never conflict.
+- Background BLE reconnect with exponential back-off that any user command resets; keep-alive never changes the colour.
+- Screen capture and sync restart on failure, falling back from dxcam to mss.
+- Single app instance, watchdog for the window.
+- The web API accepts only JSON from its own page and its own host — protection against cross-site requests.
 
-## Архитектура
+## Architecture
 
 ```
-desktop.py ─┐                 ┌─ sync_engine.py ─ capture → extract → dynamics → pipeline
+desktop.py ─┐                    ┌─ sync_engine.py ─ capture → extract → dynamics → pipeline
             ├─ webapp.Controller ┤
-webapp.py  ─┘                 └─ events.EventPlayer ─ scenes.py
-                                       │
-                                  transport.py ─ bjled.py (BLE) / WLED (DDP)
+webapp.py  ─┘                    └─ events.EventPlayer ─ scenes.py
+                                          │
+                                     transport.py ─ bjled.py (BLE) / WLED (DDP)
 ```
 
-| модуль | назначение |
+| module | purpose |
 |---|---|
-| `desktop.py` | нативное окно, точка входа `Lamp.exe`; поднимает веб-панель в том же процессе |
-| `webapp.py` | `Controller` (общее состояние и статус), HTTP-API и страница для телефона |
-| `events.py` | `EventPlayer` — владеет связью с лентой, проигрывает сцены, плавные переходы |
-| `sync_engine.py` | синхронизация с экраном на уже открытом соединении |
-| `scenes.py` | сцены: шум, плавающие периоды, цветовая температура, закат по координатам |
-| `capture.py` | захват экрана dxcam / mss, обрезка чёрных полей |
-| `extract.py` | цвет кадра (`average`, `vibrant`, `dominant`), детектор склеек |
-| `dynamics.py` | сглаживание, вспышки, дрейф, контраст, планировщик отправки |
-| `pipeline.py` | общий конвейер слоёв поверх цвета экрана |
-| `color.py` | линейный свет, Oklab, профиль вывода |
-| `zones.py`, `transport.py` | раскладка кадра по зонам, вывод в BLE или WLED |
-| `bjled.py` | клиент контроллера: кадры протокола, переподключение |
-| `audio.py` | громкость системного звука через WASAPI loopback |
-| `winevents.py` | сон, пробуждение и блокировка Windows |
-| `ambilight.py` | самостоятельный CLI с горячими клавишами |
-| `icon.py` | иконка, рисуется кодом |
+| `desktop.py` | native window, `Lamp.exe` entry point; starts the web panel in the same process |
+| `webapp.py` | `Controller` (shared state and status), HTTP API and the phone page |
+| `events.py` | `EventPlayer` — owns the strip connection, plays scenes, smooth transitions |
+| `sync_engine.py` | screen sync over the already open connection |
+| `scenes.py` | scenes: noise, floating periods, colour temperature, sunset by coordinates |
+| `capture.py` | dxcam / mss screen capture, black-bar cropping |
+| `extract.py` | frame colour (`average`, `vibrant`, `dominant`), scene-cut detector |
+| `dynamics.py` | smoothing, flashes, drift, contrast, send scheduler |
+| `pipeline.py` | shared layer pipeline on top of the screen colour |
+| `color.py` | linear light, Oklab, output profile |
+| `zones.py`, `transport.py` | per-zone frame layout, output to BLE or WLED |
+| `bjled.py` | controller client: protocol frames, reconnect |
+| `audio.py` | system audio volume via WASAPI loopback |
+| `winevents.py` | Windows sleep, wake and lock |
+| `ambilight.py` | standalone CLI with hotkeys |
+| `icon.py` | the icon, drawn in code |
 
-Служебные утилиты для работы с железом: `scan_ble.py`, `gatt_explore.py`,
-`probe_ble.py`, `probe_protocol.py` (исследование устройства и протокола),
-`calibrate.py`, `hw_camera.py` (калибровка), `effects.py`, `schedule_led.py`
-(встроенные эффекты и таймер контроллера), `rescue.py` и `hw_*.py`
-(диагностика и ручные проверки на ленте).
+Hardware utilities: `scan_ble.py`, `gatt_explore.py`, `probe_ble.py`, `probe_protocol.py` (device and protocol
+research), `calibrate.py`, `hw_camera.py` (calibration), `effects.py`, `schedule_led.py` (built-in effects and
+controller timer), `rescue.py` and `hw_*.py` (diagnostics and manual checks on the strip).
 
-## Установка и запуск
+## Install and run
 
-Нужен Windows 10/11 и Python 3.14.
+Requires Windows 10/11 and Python 3.14.
 
 ```bash
 python -m pip install -r requirements.txt
 python desktop.py
 ```
 
-MAC-адрес ленты и настройки хранятся в `config.json` рядом с программой.
-Веб-панель доступна с телефона в той же сети по адресу, показанному в окне.
+The strip's MAC address and settings are stored in `config.json` next to the app.
+The web panel is reachable from a phone on the same network at the address shown in the window.
 
-CLI-вариант:
+CLI variant:
 
 ```bash
 python ambilight.py <MAC> --preset film
 ```
 
-Сборка `Lamp.exe` и `Ambilight.exe`:
+Build `Lamp.exe` and `Ambilight.exe`:
 
 ```bash
 python -m PyInstaller lamp.spec --noconfirm
 ```
 
-## Тесты
+## Tests
 
 ```bash
 python test_app.py
 python test_dynamics.py
 ```
 
-`test_app.py` проверяет приложение целиком на программной модели ленты и
-BLE-эфира, без железа: протокол, питание и переходы, сцены, сон и блокировку
-ПК, переподключение, захват, веб-API. `test_dynamics.py` проверяет алгоритмы
-обработки цвета.
+`test_app.py` exercises the whole app against a software model of the strip and the BLE link, no hardware
+needed: protocol, power and transitions, scenes, PC sleep and lock, reconnect, capture, web API.
+`test_dynamics.py` covers the colour-processing algorithms.
 
-## Ограничения
+## Limitations
 
-- Лента неадресная: весь отрезок светит одним цветом.
-- Задержка BLE — от ~100 мс.
-- Игры в эксклюзивном полноэкранном режиме не отдают кадр через Desktop
-  Duplication; помогает оконный режим без рамки.
+- The strip is not addressable: the whole segment shows one colour.
+- BLE latency starts at ~100 ms.
+- Games in exclusive fullscreen do not expose frames via Desktop Duplication; borderless windowed mode helps.
 
-## Источники
+## Credits
 
 [8none1/bj_led](https://github.com/8none1/bj_led),
 [Tech-Morph/MohuanLED_HA](https://github.com/Tech-Morph/MohuanLED_HA),
